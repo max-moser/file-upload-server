@@ -2,54 +2,92 @@ package main
 
 import (
 	"crypto/md5"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 )
 
-var filename string = "output"
-var filePermissions fs.FileMode = 0600
+var baseDirectory = "./upload"
+var filePermissions fs.FileMode = 0640
+var pathPermissions fs.FileMode = 0750
 var bufferSize int = 4096
+var port = 8080
 
 // TODO create AUTH tokens for accessing the POST method (file upload); they should be single-use and expire very quickly
 func main() {
-	var args = os.Args[1:]
-	if len(args) >= 1 {
-		filename = args[0]
-	}
-
 	http.HandleFunc("/", readHandler)
-	var error = http.ListenAndServe(":8080", nil)
+
+	log.Printf("Listening on port %d\n", port)
+	var error = http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 	if error != nil {
 		fmt.Fprintln(os.Stderr, error)
 	}
 }
 
-func getFilename(filename string) string {
-	return "upload/" + filename
+// Create a random string (with all lowercase characters) with the given length.
+func createRandomString(length int) string {
+	var bytes = make([]byte, length)
+	rand.Read(bytes)
+
+	// ensure that every byte represents a lowercase character
+	for i, byte := range bytes {
+		bytes[i] = (byte % 26) + 97
+	}
+
+	return string(bytes)
 }
 
-// handler for file uploads
+// Create a directory in the base directory with the given name, and a file called "data" inside it.
+// The return values will be the full name of the created data file, a file object for it, and any error along the way.
+func makeFile(name string) (string, *os.File, error) {
+	if len(name) == 0 {
+		name = createRandomString(16)
+	}
+
+	var path = fmt.Sprintf("%s/%s", baseDirectory, name)
+	var mkdirError = os.Mkdir(path, pathPermissions)
+	if mkdirError != nil {
+		return "", nil, mkdirError
+	}
+
+	var filename = fmt.Sprintf("%s/data", path)
+	var file, openError = os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_EXCL, filePermissions)
+
+	return filename, file, openError
+}
+
+// Handler for file uploads via HTTP POST operations.
+// The uploaded file will be stored in "{baseDirectory}/{NAME}/data", where "{NAME}" corresponds
+// to the path specified by the HTTP request.
+// If an empty path is specified, a random "{NAME}" will be generated.
 func readHandler(writer http.ResponseWriter, request *http.Request) {
+	var urlRegex = regexp.MustCompile("^/?([a-zA-Z0-9-_.,]*)/?$")
+	var matches = urlRegex.FindStringSubmatch(request.URL.Path)
+
 	if request.Method != "POST" {
+		// we only allow POST requests
 		writer.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	} else if matches == nil || len(matches) < 1 {
+		// only a very limited subset of possible file names is allowed
+		writer.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	// TODO we may actually not want to override existing files... use `os.O_EXCL`?
-	var filename = getFilename(filename)
 	var buffer = make([]byte, bufferSize)
 	var hash, hashName = md5.New(), "md5"
-	var file, error = os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, filePermissions)
+	var filename, file, error = makeFile(matches[1])
 	defer file.Close()
 
 	// if we can't open the file for some reason, we delete it
 	if error != nil {
 		writer.WriteHeader(http.StatusInternalServerError)
-		log.Printf("Error while opening file '%s': %s", filename, error)
+		log.Printf("Error while creating upload: %s", error)
 		return
 	}
 
@@ -86,8 +124,8 @@ func readHandler(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
-// write the data to the file
-// TODO make it buffered?
+// Write the data bytes to the specified file.
+// If an error occurs, return it.
 func writeToFile(file *os.File, data []byte) error {
 	var totalBytesWritten = 0
 
