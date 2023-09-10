@@ -79,7 +79,7 @@ func readHandler(writer http.ResponseWriter, request *http.Request) {
 	var checksumFilename = fmt.Sprintf("%s.%s", filename, hashName)
 
 	fmt.Fprintln(writer, hashResult)
-	error = os.WriteFile(checksumFilename, []byte(hashResult), filePermissions)
+	error = os.WriteFile(checksumFilename, []byte(hashResult+"\n"), filePermissions)
 	if error != nil {
 		log.Printf("Error while writing checksum to %s: %s", checksumFilename, error)
 		return
