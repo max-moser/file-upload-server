@@ -12,7 +12,7 @@ import (
 
 var filename string = "output"
 var filePermissions fs.FileMode = 0600
-var bufferSize int = 4069
+var bufferSize int = 4096
 
 // TODO create AUTH tokens for accessing the POST method (file upload); they should be single-use and expire very quickly
 func main() {
@@ -28,6 +28,10 @@ func main() {
 	}
 }
 
+func getFilename(filename string) string {
+	return "upload/" + filename
+}
+
 // handler for file uploads
 func readHandler(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != "POST" {
@@ -36,6 +40,7 @@ func readHandler(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	// TODO we may actually not want to override existing files... use `os.O_EXCL`?
+	var filename = getFilename(filename)
 	var buffer = make([]byte, bufferSize)
 	var hash, hashName = md5.New(), "md5"
 	var file, error = os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, filePermissions)
@@ -73,7 +78,7 @@ func readHandler(writer http.ResponseWriter, request *http.Request) {
 	var hashResult = fmt.Sprintf("%x  %s", hash.Sum([]byte{}), filename)
 	var checksumFilename = fmt.Sprintf("%s.%s", filename, hashName)
 
-	fmt.Fprintln(writer, hashResult, filename)
+	fmt.Fprintln(writer, hashResult)
 	error = os.WriteFile(checksumFilename, []byte(hashResult), filePermissions)
 	if error != nil {
 		log.Printf("Error while writing checksum to %s: %s", checksumFilename, error)
